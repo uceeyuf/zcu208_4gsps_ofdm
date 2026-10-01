@@ -11,7 +11,7 @@ The OFDM transmitter and receiver of [rfsoc4x2_rdma_ofdm](https://github.com/uce
 
 * **2 GSPS, on the board**: `ofdm_tx` (8 × 1024-point IFFT) and `ofdm_rx` (8 × 1024-point FFT, widely linear equaliser, pilot phase) run together. FPGA to FPGA, 16-QAM (5.29 Gb/s of payload) for 30 s: BER 2.0 × 10⁻¹⁰; 64-QAM 2.3 × 10⁻⁷, 256-QAM 2.1 × 10⁻⁴, the same as the CPU modem. BRAM 73 %, DSP 20 %, timing met.
 * **4 GSPS, in progress**: transmitter, receiver and rf_stream take 16 samples per cycle (16 lanes each); see [4 GSPS](#4-gsps) for where it stands.
-* **Modem 2, in progress**: a new modem for two independent ends (independent lasers or oscillators, independent sample clocks), designed for the worst case; C models done, the transmitter on the board (cable loopback, 16-QAM: BER 5 × 10⁻⁹), see [Modem 2](#modem-2-two-independent-ends).
+* **Modem 2, in progress**: a new modem for two independent ends (independent lasers or oscillators, independent sample clocks), designed for the worst case; C models done, the transmitter on the board at 2 and 4 GSPS (cable loopback; 2 GSPS, 16-QAM: EVM −37.2 dB, no error in 415 M bits), see [Modem 2](#modem-2-two-independent-ends).
 
 The host CPU modem, the video link and the streaming results of the sample path are in [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm), which this work continues. **This repository documents the design and the measurements; the source of the FPGA modem (RTL, bit-exact models, testbenches) is not published.**
 
@@ -98,7 +98,7 @@ The modem above lives on the cable loopback: one sample clock, one oscillator, n
   * 16-QAM: 5.10 Gb/s before the FEC.
 * **Receiver.**
   * DC removal, then blind IQ correction.
-  * The RF pilot, filtered and combined over the polarizations, removes the carrier offset and the laser phase noise sample by sample (no NCO).
+  * The RF pilot, mixed down at its own frequency (so that its image from the transmitter's IQ imbalance stays outside the filter), filtered and combined over the polarizations, removes the carrier offset and the laser phase noise sample by sample.
   * STF detection, then LTF timing. The sample clock offset is tracked by a second-order loop; each block window slips by whole samples (no resampler).
   * Widely linear 2 × (2 · polarizations) combiner per pair (k, −k), whitened by each branch's noise, from the channel smoothed over ±8 sub-carriers after removing its delay; per-symbol pilot phase and slope.
 * **Worst case**:
@@ -111,21 +111,24 @@ The modem above lives on the cable loopback: one sample clock, one oscillator, n
 
 | RX | bits / errors | BER (95 % Wilson) | per seed | EVM |
 | :-- | :-- | :-- | :-- | :-- |
-| 1 polarization | 28.1 M / 1134 | 4.0 × 10⁻⁵ (3.8 … 4.3 × 10⁻⁵) | 3.6 … 4.5 × 10⁻⁵ | −18.8 dB |
-| 2 polarizations, random state | 28.1 M / 1311 | 4.7 × 10⁻⁵ (4.4 … 4.9 × 10⁻⁵) | 3.2 … 8.5 × 10⁻⁵ | −18.8 … −18.4 dB |
+| 1 polarization | 28.1 M / 730 | 2.6 × 10⁻⁵ (2.4 … 2.8 × 10⁻⁵) | 2.3 … 3.1 × 10⁻⁵ | −19.0 … −18.9 dB |
+| 2 polarizations, random state | 28.1 M / 876 | 3.1 × 10⁻⁵ (2.9 … 3.3 × 10⁻⁵) | 2.1 … 5.3 × 10⁻⁵ | −19.0 … −18.5 dB |
+
+* **Regression.** 33 conditions, one impairment at a time, then combined (carrier offset ±0.1 … ±7 MHz, a residual one tracked by the in-band pilots only, sample clock ±10 … ±50 ppm, IQ imbalance with and without a carrier offset, a random start and phase, the lasers, AWGN), 12 seeds each, the receiver in fixed point: every seed synchronized. It found what single conditions hid: the transmitter's IQ imbalance cost 2.3 dB with a 5 MHz offset (the RF pilot's own image leaking into the pilot filter), fixed by mixing the pilot down at its own frequency.
 
 * **FEC** sits behind a generic streaming interface, so codes can be swapped.
-  * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves ~50× on the worst seed.
-  * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) holds as well: 2.6× on the worst seed.
+  * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves ~85× on the worst seed.
+  * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) holds as well: 4.2× on the worst seed.
 * **The lasers dominate.** RF oscillators have far less phase noise and offset, so the same receiver has more margin behind an RF mixer.
 | ![Modem 2 video](./docs/img/m2_720p_burst.gif) |
 | :---------------------------------------------: |
-| **Figure2** : Modem 2 on the board, 16-QAM, 720p: one 24.5 ms burst of 1497 OFDM frames, 11 consecutive video frames sent (left) and received byte-exact (right); FPGA transmitter, host receiver offline |
+| **Figure2** : Modem 2 on the board, 16-QAM, 720p: one 24.5 ms burst of 1497 OFDM frames, 11 consecutive video frames sent (left) and received byte-exact (right); FPGA transmitter, the ADCs' calibration frozen, host receiver offline |
 
 * **Status.**
   * [x] C models: the floating / fixed-point end-to-end reference, and the transmitter bit-exact (AMD's xfft C model).
   * [x] Transmitter RTL (`m2_tx`): identical to its model sample by sample (16, 64 and 256-QAM at S = 8; 16-QAM at S = 16; 3 frames each).
-  * [x] Transmitter on the board (`RDMA_MODEM=2`: m2_tx in rf_stream, WNS +0.091 ns), the host receiver on raw ADC captures; SMA loopback, 16-QAM (5.10 Gb/s): EVM −29.4 dB, 4 bit errors in 800 M bits (BER 5.0 × 10⁻⁹); 64 / 256-QAM BER 1.8 × 10⁻⁴ / 9.4 × 10⁻⁴. A known spur of this board: the converters repeat the RF pilot at ± j fs / 8 (−36 dBc).
+  * [x] Transmitter on the board (`RDMA_MODEM=2`: m2_tx in rf_stream), the host receiver on raw ADC captures; SMA loopback. 2 GSPS: EVM −37.2 dB at 16 / 64 / 256-QAM; 16-QAM (5.10 Gb/s) 0 errors in 415 M bits (BER < 7.2 × 10⁻⁹), 64-QAM 0 / 7.7 M, 256-QAM (10.2 Gb/s) 0 / 10.2 M. 4 GSPS: 16-QAM −34.2 dB, 256-QAM (20.4 Gb/s) −34.4 dB, BER 4.6 × 10⁻⁵.
+  * [x] The ADCs' background calibration. A strong component synchronous with their 8-way interleaving biases it by its phase: the RF pilot (bin 8 = fs / 128), and the frame itself (the STF is 128-periodic); a frame rotated by 30° came out 2.4 dB worse than at 0° or 90°. Rule: while the calibration adapts, it must see nothing synchronous with the interleaving. At link start the modulator mutes the frames and sends a tone offset from the pilot (bin 8.077); the calibration converges on it and is frozen (A53 keys z / u), then the frames start: EVM −29.4 → −37.2 dB at 2 GSPS, −27.5 → −34.2 dB at 4 GSPS.
   * [x] Four-ADC capture (X and Y of a coherent receiver, one-shot at 128 Gb/s); a conjugated branch is found from the RF pilot.
   * [ ] Receiver RTL.
   * [ ] FEC.
@@ -141,7 +144,8 @@ The modem above lives on the cable loopback: one sample clock, one oscillator, n
 * [x] One-shot sample capture (control bit 6): the link cannot carry 4 GSPS of samples (128 Gb/s), so the capture stops at its first overflow, on a chunk boundary, and the host locks and trains on those frames.
 * [x] `rf_gear`: the 500 MHz × 8 streams of the block design to 250 MHz × 16 and back.
 * [x] Simulation: `ofdm_tx` and `ofdm_rx` at S = 16 bit-exact with the models (16-QAM, 3 frames); `rf_stream` at S = 8 and 16.
-* [ ] Build at 4 GSPS, host (`rf_ofdm` for S = 16, one-shot acquisition), board.
+* [x] Modem 2's transmitter board at 4 GSPS (`RDMA_GSPS=4.0 RDMA_MODEM=2`: WNS +0.005 ns, URAM 95 %), the host on one-shot captures (~12 frames each): 16-QAM (10.2 Gb/s) EVM −34.2 dB, 64-QAM (15.3 Gb/s) −35.0 dB, both without errors; 256-QAM (20.4 Gb/s) −34.4 dB, BER 4.6 × 10⁻⁵. At 4 GSPS one board per direction: the dual-polarization receiver goes on a board of its own.
+* [ ] The receiver board at 4 GSPS (Modem 2's receiver RTL first, at 2 GSPS).
 * [ ] ZCU208.
 
 　
@@ -193,7 +197,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 * **2 GSPS，已上板**：`ofdm_tx`（8 个 1024 点 IFFT）和 `ofdm_rx`（8 个 1024 点 FFT、宽线性均衡、导频相位）同时运行。FPGA 到 FPGA，16-QAM（净荷 5.29 Gb/s）30 s BER 2.0 × 10⁻¹⁰；64-QAM 2.3 × 10⁻⁷，256-QAM 2.1 × 10⁻⁴，与 CPU 调制解调相同。BRAM 73 %，DSP 20 %，时序满足。
 * **4 GSPS，进行中**：发射机、接收机和 rf_stream 已支持每周期 16 个样本（各 16 条 lane），进度见 [4 GSPS](#4-gsps-1)。
-* **Modem 2，进行中**：面向两端独立（激光器或本振独立、采样时钟独立）的新调制解调，按最坏情况设计；C 模型已完成，发射端已上板（电缆环回，16-QAM：BER 5 × 10⁻⁹），见 [Modem 2](#modem-2两端独立)。
+* **Modem 2，进行中**：面向两端独立（激光器或本振独立、采样时钟独立）的新调制解调，按最坏情况设计；C 模型已完成，发射端已在 2 和 4 GSPS 上板（电缆环回；2 GSPS 16-QAM：EVM −37.2 dB，415 M bit 零误码），见 [Modem 2](#modem-2两端独立)。
 
 主机 CPU 调制解调、视频链路和样本流的结果在 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm)，本工作在它的基础上继续。**本仓库只介绍设计和测量结果，FPGA 调制解调的源码（RTL、位精确模型、testbench）不公开。**
 
@@ -268,7 +272,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
   * 16-QAM：FEC 前 5.10 Gb/s。
 * **接收机**
   * 先去 DC，再做盲 IQ 校正。
-  * 射频导频经滤波、在各偏振间合并后，逐样本去掉载波频偏和激光相位噪声（不需要 NCO）。
+  * 射频导频按其自身频率混频（使发射端 IQ 失衡造成的导频镜像落在滤波器之外），经滤波、在各偏振间合并后，逐样本去掉载波频偏和激光相位噪声。
   * STF 检测，然后用 LTF 定时。采样时钟偏差由二阶环跟踪，各块窗口按整样本滑动（不用重采样器）。
   * 每对 (k, −k) 用宽线性 2 × (2 · 偏振数) 合并器，按各支路噪声白化，信道先去时延再在 ±8 个子载波上平滑；每个符号做导频相位和斜率校正。
 * **最坏情况**
@@ -281,19 +285,22 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 | 接收 | bit / 误码 | BER（95 % Wilson） | 各种子 | EVM |
 | :-- | :-- | :-- | :-- | :-- |
-| 1 个偏振 | 28.1 M / 1134 | 4.0 × 10⁻⁵（3.8 … 4.3 × 10⁻⁵） | 3.6 … 4.5 × 10⁻⁵ | −18.8 dB |
-| 2 个偏振，随机偏振态 | 28.1 M / 1311 | 4.7 × 10⁻⁵（4.4 … 4.9 × 10⁻⁵） | 3.2 … 8.5 × 10⁻⁵ | −18.8 … −18.4 dB |
+| 1 个偏振 | 28.1 M / 730 | 2.6 × 10⁻⁵（2.4 … 2.8 × 10⁻⁵） | 2.3 … 3.1 × 10⁻⁵ | −19.0 … −18.9 dB |
+| 2 个偏振，随机偏振态 | 28.1 M / 876 | 3.1 × 10⁻⁵（2.9 … 3.3 × 10⁻⁵） | 2.1 … 5.3 × 10⁻⁵ | −19.0 … −18.5 dB |
+
+* **回归测试**：33 种条件，先单项再组合（载波频偏 ±0.1 … ±7 MHz、只靠带内导频跟踪的残余频偏、采样时钟 ±10 … ±50 ppm、带与不带频偏的 IQ 失衡、随机起点与相位、激光、AWGN），每项 12 个种子，接收机定点：所有种子都完成同步。它发现了单项测试看不到的问题：5 MHz 频偏下发射端 IQ 失衡损失 2.3 dB（射频导频自身的镜像漏进导频滤波器），改为按导频自身频率混频后解决。
 
 * **FEC** 放在通用流接口后面，码可以替换。
-  * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 50 倍余量。
-  * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 2.6 倍余量。
+  * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 85 倍余量。
+  * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 4.2 倍余量。
 * **激光器是主要限制**：射频本振的相位噪声和频偏小得多，同一个接收机接射频混频器时余量更大。
-见上文图 2：Modem 2 上板，16-QAM 720p，一次 24.5 ms、1497 个 OFDM 帧的 burst，11 帧连续视频逐字节正确（FPGA 发射，主机离线接收）。
+见上文图 2：Modem 2 上板，16-QAM 720p，一次 24.5 ms、1497 个 OFDM 帧的 burst，11 帧连续视频逐字节正确（FPGA 发射，ADC 校准已冻结，主机离线接收）。
 
 * **进度**
   * [x] C 模型：浮点 / 定点端到端参考，发射端位精确模型（AMD 的 xfft C 模型）。
   * [x] 发射端 RTL（`m2_tx`）：与模型逐样本一致（S = 8 下 16 / 64 / 256-QAM，S = 16 下 16-QAM，各 3 帧）。
-  * [x] 发射端上板（`RDMA_MODEM=2`：m2_tx 接入 rf_stream，WNS +0.091 ns），主机接收机解原始 ADC 采集；SMA 环回，16-QAM（5.10 Gb/s）：EVM −29.4 dB，800 M bit 中 4 个比特错（BER 5.0 × 10⁻⁹）；64 / 256-QAM BER 1.8 × 10⁻⁴ / 9.4 × 10⁻⁴。本板已知杂散：转换器把射频导频复制到 ± j fs / 8（−36 dBc）。
+  * [x] 发射端上板（`RDMA_MODEM=2`：m2_tx 接入 rf_stream），主机接收机解原始 ADC 采集；SMA 环回。2 GSPS：16 / 64 / 256-QAM 的 EVM 都是 −37.2 dB；16-QAM（5.10 Gb/s）415 M bit 零误码（BER < 7.2 × 10⁻⁹），64-QAM 0 / 7.7 M，256-QAM（10.2 Gb/s）0 / 10.2 M。4 GSPS：16-QAM −34.2 dB，256-QAM（20.4 Gb/s）−34.4 dB，BER 4.6 × 10⁻⁵。
+  * [x] ADC 后台校准。与其 8 路交织同步的强成分会按相位把它带偏：射频导频（bin 8 = fs / 128），以及帧本身（STF 以 128 为周期）；帧旋转 30° 比 0° 或 90° 差 2.4 dB。原则：校准自适应期间，不能让它看到任何与交织同步的成分。链路启动时调制器静音所有帧，只发偏离导频的单音（bin 8.077）；校准在其上收敛后冻结（A53 按键 z / u），再开始发帧：EVM 2 GSPS 下 −29.4 → −37.2 dB，4 GSPS 下 −27.5 → −34.2 dB。
   * [x] 四路 ADC 采集（相干接收机的 X、Y，128 Gb/s 单次采集）；被共轭的支路由射频导频自动识别。
   * [ ] 接收端 RTL。
   * [ ] FEC。
@@ -309,7 +316,8 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 * [x] 一次性样本抓取（控制字 bit 6）：链路传不了 4 GSPS 的样本（128 Gb/s），抓取在第一次溢出时停下（正好在 chunk 边界），主机用抓到的帧锁定和训练。
 * [x] `rf_gear`：block design 的 500 MHz × 8 与 250 MHz × 16 之间互转。
 * [x] 仿真：S = 16 的 `ofdm_tx` 和 `ofdm_rx` 与模型逐位一致（16-QAM，3 帧）；`rf_stream` 在 S = 8 和 16 下通过。
-* [ ] 4 GSPS 编译，主机端（`rf_ofdm` 支持 S = 16、一次性抓取锁定），上板。
+* [x] Modem 2 的 4 GSPS 发射板（`RDMA_GSPS=4.0 RDMA_MODEM=2`：WNS +0.005 ns，URAM 95 %），主机用一次性抓取（每次约 12 帧）：16-QAM（10.2 Gb/s）EVM −34.2 dB、64-QAM（15.3 Gb/s）−35.0 dB，均零误码；256-QAM（20.4 Gb/s）−34.4 dB，BER 4.6 × 10⁻⁵。4 GSPS 下每块板负责一个方向：双偏振接收机放在单独的板上。
+* [ ] 4 GSPS 接收板（先完成 2 GSPS 的 Modem 2 接收端 RTL）。
 * [ ] ZCU208。
 
 　
