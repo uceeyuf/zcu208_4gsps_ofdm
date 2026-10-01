@@ -9,7 +9,7 @@
 
 The OFDM transmitter and receiver of [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm) (where the host CPU is the modem) moved into the FPGA, bit-exact with their C models. The host only sends and checks payloads over RoCE v2 (AMD ERNIC, 100G). Now on the RFSoC 4x2 (XCZU48DR), loopback DAC_A → ADC_B (I), DAC_B → ADC_D (Q), multi-tile synchronised; the ZCU208 (the same XCZU48DR) comes next.
 
-* **2 GSPS, on the board**: `ofdm_tx` (8 × 1024-point IFFT) and `ofdm_rx` (8 × 1024-point FFT, widely linear equaliser, pilot phase) run together. FPGA to FPGA, 16-QAM (5.29 Gb/s of payload) for 30 s: BER 2.0 × 10⁻¹⁰; 64-QAM 2.3 × 10⁻⁷, 256-QAM 2.1 × 10⁻⁴, the same as the CPU modem. BRAM 73 %, DSP 20 %, timing met.
+* **2 GSPS, on the board**: `ofdm_tx` (8 × 1024-point IFFT) and `ofdm_rx` (8 × 1024-point FFT, widely linear equaliser, pilot phase) run together, bit-exact with their C models; BRAM 73 %, DSP 20 %, timing met. Board results: [Modem 2](#modem-2-two-independent-ends).
 * **4 GSPS, in progress**: transmitter, receiver and rf_stream take 16 samples per cycle (16 lanes each); see [4 GSPS](#4-gsps) for where it stands.
 * **Modem 2, in progress**: a new modem for two independent ends (independent lasers or oscillators, independent sample clocks), designed for the worst case; C models done, the transmitter on the board at 2 and 4 GSPS (cable loopback; 2 GSPS, 16-QAM: EVM −37.2 dB, no error in 415 M bits), see [Modem 2](#modem-2-two-independent-ends).
 
@@ -47,10 +47,6 @@ The transmitter (`ofdm_tx`) is the host's streaming modulator in hardware, 8 sam
   * The RTL is simulated (xsim, with the IP) and compared with the model sample by sample: identical for QPSK, 16, 64 and 256-QAM.
 * **Resources.** The transmitter takes 34 BRAM36, 8 UltraRAM and 321 DSP (each IFFT: 4 BRAM36, 40 DSP). The design's BRAM goes mostly to rf_stream's sample rings, used when the host modulates or demodulates.
 
-| ![fpga tx](./docs/img/ofdm_16qam_fpga_tx.png) |
-| :-------------------------------------------: |
-| **Figure1** : 16-QAM modulated in the FPGA: the same spectrum and EVM (−30.6 dB) as from the CPU |
-
 　
 
 ## The FPGA receiver
@@ -67,7 +63,7 @@ The receiver (`ofdm_rx`) demodulates 8 samples per 250 MHz cycle with a static c
   * Then the 417 data pairs: v = x · rot (>> 14), sliced on the grid of odd integers × 2¹⁰, Gray, m bits into the lane's bit buffers by payload index.
 * **Packer.** The symbols in order, 8 sub-carriers per cycle, into 512-bit words; each frame padded to 512 words, at most one word every other cycle (the ring's clock crossing drains 200 M words/s).
 * **Verification.**
-  * A C model follows every step bit-exactly (AMD's xfft C model, float32 in the RTL's order). On board dumps its decisions match the floating-point receiver: identical at 16 and 64-QAM, 3 × 10⁻⁵ of the bits differ at 256-QAM; EVM −30.6 / −30.5 / −30.3 dB.
+  * A C model follows every step bit-exactly (AMD's xfft C model, float32 in the RTL's order). On board dumps its decisions match the floating-point receiver: identical at 16 and 64-QAM, 3 × 10⁻⁵ of the bits differ at 256-QAM.
   * The RTL is simulated on the samples of board dumps and compared with the model, payload bit by payload bit: identical at 16, 64 and 256-QAM.
 * **Resources.** The receiver takes 68.5 BRAM36, 516 DSP and 32 k LUT; no UltraRAM.
 
@@ -79,11 +75,8 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 
 | Test | Result |
 | :--- | :----- |
-| FPGA transmitter and receiver (`--fpga-tx 1 --fpga-rx 1`), 16-QAM 720p, 30 s | 1.83 M frames demodulated in the FPGA, BER 2.0 × 10⁻¹⁰ (32 bits in 1.6 × 10¹¹, at most 7.6 × 10⁻¹⁰ in any second), 14310 of 14338 video frames byte-exact, 0 TX underflows, 0 RX overflows ([log](./docs/results/ofdm_fpga_rx_m4_30s_log.txt)) |
-| FPGA transmitter and receiver, 64-QAM 1080p / 256-QAM, 20 s | BER 2.3 × 10⁻⁷ (per-second median 2.1 × 10⁻⁷) / 2.1 × 10⁻⁴, as with the CPU receiver ([64](./docs/results/ofdm_fpga_rx_m6_20s_log.txt), [256](./docs/results/ofdm_fpga_rx_m8_20s_log.txt)) |
-| FPGA transmitter, CPU receiver (`--fpga-tx 1`), 16-QAM 720p, 30 s | 29 / 29 s without errors, BER 5.9 × 10⁻¹⁰, 14259 of 14338 video frames byte-exact, 0 TX underflows ([log](./docs/results/ofdm_fpga_tx_m4_30s_log.txt)) |
-| FPGA transmitter, 64-QAM 1080p / 256-QAM, 20 s | BER 2.3 × 10⁻⁷ / 1.9 × 10⁻⁴, as with the CPU modulator ([64](./docs/results/ofdm_fpga_tx_m6_20s_log.txt), [256](./docs/results/ofdm_fpga_tx_m8_20s_log.txt)) |
-| Timing, resources | all constraints met (WNS +0.049 ns); BRAM 73 %, UltraRAM 85 %, DSP 20 %, LUT 43 % ([report](./docs/results/rdma_ofdm_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm_utilization.rpt), [by instance](./docs/results/rdma_ofdm_utilization_hierarchical.rpt)) |
+| Modem 2 on the board | see [Modem 2](#modem-2-two-independent-ends) |
+| Timing, resources (modem 1) | all constraints met (WNS +0.049 ns); BRAM 73 %, UltraRAM 85 %, DSP 20 %, LUT 43 % ([report](./docs/results/rdma_ofdm_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm_utilization.rpt), [by instance](./docs/results/rdma_ofdm_utilization_hierarchical.rpt)) |
 
 　
 
@@ -122,7 +115,7 @@ The modem above lives on the cable loopback: one sample clock, one oscillator, n
 * **The lasers dominate.** RF oscillators have far less phase noise and offset, so the same receiver has more margin behind an RF mixer.
 | ![Modem 2 video](./docs/img/m2_720p_burst.gif) |
 | :---------------------------------------------: |
-| **Figure2** : Modem 2 on the board, 16-QAM, 720p: one 24.5 ms burst of 1497 OFDM frames, 11 consecutive video frames sent (left) and received byte-exact (right); FPGA transmitter, the ADCs' calibration frozen, host receiver offline |
+| **Figure1** : Modem 2 on the board, 16-QAM, 720p: one 24.5 ms burst of 1497 OFDM frames, 11 consecutive video frames sent (left) and received byte-exact (right); FPGA transmitter, the ADCs' calibration frozen, host receiver offline |
 
 * **Status.**
   * [x] C models: the floating / fixed-point end-to-end reference, and the transmitter bit-exact (AMD's xfft C model).
@@ -195,7 +188,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm)（主机 CPU 做调制解调）的 OFDM 发射机和接收机搬进了 FPGA，与各自的 C 模型逐位一致。主机只经 RoCE v2（AMD ERNIC，100G）发送和校验净荷。目前在 RFSoC 4x2（XCZU48DR）上，环回 DAC_A → ADC_B（I）、DAC_B → ADC_D（Q），多 tile 同步；下一步是 ZCU208（同为 XCZU48DR）。
 
-* **2 GSPS，已上板**：`ofdm_tx`（8 个 1024 点 IFFT）和 `ofdm_rx`（8 个 1024 点 FFT、宽线性均衡、导频相位）同时运行。FPGA 到 FPGA，16-QAM（净荷 5.29 Gb/s）30 s BER 2.0 × 10⁻¹⁰；64-QAM 2.3 × 10⁻⁷，256-QAM 2.1 × 10⁻⁴，与 CPU 调制解调相同。BRAM 73 %，DSP 20 %，时序满足。
+* **2 GSPS，已上板**：`ofdm_tx`（8 个 1024 点 IFFT）和 `ofdm_rx`（8 个 1024 点 FFT、宽线性均衡、导频相位）同时运行，与各自的 C 模型逐位一致；BRAM 73 %，DSP 20 %，时序满足。上板结果见 [Modem 2](#modem-2两端独立)。
 * **4 GSPS，进行中**：发射机、接收机和 rf_stream 已支持每周期 16 个样本（各 16 条 lane），进度见 [4 GSPS](#4-gsps-1)。
 * **Modem 2，进行中**：面向两端独立（激光器或本振独立、采样时钟独立）的新调制解调，按最坏情况设计；C 模型已完成，发射端已在 2 和 4 GSPS 上板（电缆环回；2 GSPS 16-QAM：EVM −37.2 dB，415 M bit 零误码），见 [Modem 2](#modem-2两端独立)。
 
@@ -241,7 +234,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
   * 再处理 417 对数据：v = x · rot（>> 14），在奇数 × 2¹⁰ 的网格上判决、Gray 映射，m 个 bit 按净荷序号写入该 lane 的 bit 缓存。
 * **打包**：按符号顺序、每周期 8 个子载波拼成 512 位字，每帧补齐到 512 个字，最多隔一拍输出一个字（RX 环的跨时钟 FIFO 每秒排出 2 亿个字）。
 * **验证**：
-  * C 模型逐步位精确建模（AMD 的 xfft C 模型，float32 按 RTL 的运算顺序）。在板上采集的数据上，判决与浮点接收机一致：16 / 64-QAM 完全相同，256-QAM 有 3 × 10⁻⁵ 的 bit 不同；EVM −30.6 / −30.5 / −30.3 dB。
+  * C 模型逐步位精确建模（AMD 的 xfft C 模型，float32 按 RTL 的运算顺序）。在板上采集的数据上，判决与浮点接收机一致：16 / 64-QAM 完全相同，256-QAM 有 3 × 10⁻⁵ 的 bit 不同。
   * 用板上采集的样本仿真 RTL，与模型逐 bit 比较净荷：16 / 64 / 256-QAM 全部相同。
 * **资源**：接收端占 68.5 个 BRAM36、516 个 DSP、3.2 万个 LUT，不用 UltraRAM。
 
@@ -253,11 +246,8 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 | 测试 | 结果 |
 | :--- | :--- |
-| FPGA 发射 + FPGA 接收（`--fpga-tx 1 --fpga-rx 1`），16-QAM 720p，30 s | FPGA 解调 183 万帧，BER 2.0 × 10⁻¹⁰（1.6 × 10¹¹ bit 中 32 个错，任一秒不超过 7.6 × 10⁻¹⁰），14338 帧视频中 14310 帧逐字节正确，0 TX underflow，0 RX overflow |
-| FPGA 发射 + 接收，64-QAM 1080p / 256-QAM，20 s | BER 2.3 × 10⁻⁷（每秒中位数 2.1 × 10⁻⁷）/ 2.1 × 10⁻⁴，与 CPU 接收相同 |
-| FPGA 发射、CPU 接收（`--fpga-tx 1`），16-QAM 720p，30 s | 29/29 秒无误码，BER 5.9 × 10⁻¹⁰，14338 帧中 14259 帧逐字节正确，0 TX underflow |
-| FPGA 发射，64-QAM 1080p / 256-QAM，20 s | BER 2.3 × 10⁻⁷ / 1.9 × 10⁻⁴，与 CPU 调制相同 |
-| 时序、资源 | 全部满足（WNS +0.049 ns）；BRAM 73 %，UltraRAM 85 %，DSP 20 %，LUT 43 % |
+| Modem 2 上板 | 见 [Modem 2](#modem-2两端独立) |
+| 时序、资源（模块 1） | 全部满足（WNS +0.049 ns）；BRAM 73 %，UltraRAM 85 %，DSP 20 %，LUT 43 % |
 
 　
 
@@ -294,7 +284,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
   * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 85 倍余量。
   * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 4.2 倍余量。
 * **激光器是主要限制**：射频本振的相位噪声和频偏小得多，同一个接收机接射频混频器时余量更大。
-见上文图 2：Modem 2 上板，16-QAM 720p，一次 24.5 ms、1497 个 OFDM 帧的 burst，11 帧连续视频逐字节正确（FPGA 发射，ADC 校准已冻结，主机离线接收）。
+见上文图 1：Modem 2 上板，16-QAM 720p，一次 24.5 ms、1497 个 OFDM 帧的 burst，11 帧连续视频逐字节正确（FPGA 发射，ADC 校准已冻结，主机离线接收）。
 
 * **进度**
   * [x] C 模型：浮点 / 定点端到端参考，发射端位精确模型（AMD 的 xfft C 模型）。
