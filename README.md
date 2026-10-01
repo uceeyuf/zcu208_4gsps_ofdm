@@ -10,7 +10,7 @@
 The OFDM transmitter and receiver of [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm) (where the host CPU is the modem) moved into the FPGA, bit-exact with their C models. The host only sends and checks payloads over RoCE v2 (AMD ERNIC, 100G). Now on the RFSoC 4x2 (XCZU48DR), loopback DAC_A → ADC_B (I), DAC_B → ADC_D (Q), multi-tile synchronised; the ZCU208 (the same XCZU48DR) comes next.
 
 * **2 GSPS, on the board**: `ofdm_tx` (8 × 1024-point IFFT) and `ofdm_rx` (8 × 1024-point FFT, widely linear equaliser, pilot phase) run together. FPGA to FPGA, 16-QAM (5.29 Gb/s of payload) for 30 s: BER 2.0 × 10⁻¹⁰; 64-QAM 2.3 × 10⁻⁷, 256-QAM 2.1 × 10⁻⁴, the same as the CPU modem. BRAM 73 %, DSP 20 %, timing met.
-* **4 GSPS, in progress**: the loopback carries 62 MHz … 1.8 GHz as cleanly as the lower band (16-QAM 10.59 Gb/s error-free in buffer mode). Transmitter, receiver and rf_stream take 16 samples per cycle (16 lanes each); see [4 GSPS](#4-gsps) for where it stands.
+* **4 GSPS, in progress**: transmitter, receiver and rf_stream take 16 samples per cycle (16 lanes each); see [4 GSPS](#4-gsps) for where it stands.
 
 The host CPU modem, the video link and the streaming results of the sample path are in [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm), which this work continues. **This repository documents the design and the measurements; the source of the FPGA modem (RTL, bit-exact models, testbenches) is not published.**
 
@@ -88,21 +88,6 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 
 ## 4 GSPS
 
-### The loopback at 4 GSPS
-
-Does the loopback carry twice the band? The standalone MTS design also builds at 4.0 GSPS (`MTS_GSPS=4.0`, RF fabric 500 MHz, WNS +0.057 ns), and the A53 then plays and captures OFDM frames with the same N = 1024 over 62 MHz … 1.80 GHz. Buffer mode, 0.25 FS RMS per rail ([log](./docs/results/ofdm_4gsps_band_log.txt)):
-
-| Band at 4 GSPS | Sub-carriers | 16-QAM: EVM, errors | 64-QAM: EVM, errors |
-| :-- | :-: | :-- | :-- |
-| full, 62 MHz … 1.80 GHz | 834 | −24.4 dB, 0 (10.59 Gb/s) | −24.0 dB, 1 × 10⁻³ (15.88 Gb/s) |
-| lower half, 62 … 977 MHz | 440 | −27.8 dB, 0 | −28.6 dB, 0 |
-| upper half, 977 MHz … 1.80 GHz | 396 | −29.4 dB, 0 | −28.6 dB, 0 |
-| 2 GSPS for comparison, 31 … 898 MHz | 834 | −27.4 dB, 0 | −28.0 dB, 5 × 10⁻⁴ |
-
-* The upper half is as clean as the lower one: the baluns and the cable pass 1 … 1.8 GHz without a notable loss.
-* The full band is 3 dB worse, as expected. The total power is fixed by clipping, and each sub-carrier now collects noise over twice the bandwidth.
-* So 4 GSPS doubles the rate at 3 dB less SNR. 16-QAM at 10.6 Gb/s is error-free even in buffer mode, which is about 3 dB worse than the streaming link.
-
 ### The FPGA modem at 4 GSPS (in progress)
 
 * [x] `ofdm_tx`, `ofdm_rx` and `rf_stream` take S = 16 (16 lanes each; two pilot rotation units; the packer takes 16 sub-carriers per cycle). The payload fetch of the transmitter is timed per symbol region, since a frame (2048 cycles) is now shorter than a lane's symbol.
@@ -161,7 +146,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm)（主机 CPU 做调制解调）的 OFDM 发射机和接收机搬进了 FPGA，与各自的 C 模型逐位一致。主机只经 RoCE v2（AMD ERNIC，100G）发送和校验净荷。目前在 RFSoC 4x2（XCZU48DR）上，环回 DAC_A → ADC_B（I）、DAC_B → ADC_D（Q），多 tile 同步；下一步是 ZCU208（同为 XCZU48DR）。
 
 * **2 GSPS，已上板**：`ofdm_tx`（8 个 1024 点 IFFT）和 `ofdm_rx`（8 个 1024 点 FFT、宽线性均衡、导频相位）同时运行。FPGA 到 FPGA，16-QAM（净荷 5.29 Gb/s）30 s BER 2.0 × 10⁻¹⁰；64-QAM 2.3 × 10⁻⁷，256-QAM 2.1 × 10⁻⁴，与 CPU 调制解调相同。BRAM 73 %，DSP 20 %，时序满足。
-* **4 GSPS，进行中**：环回链路在 62 MHz … 1.8 GHz 上和低频段一样干净（缓冲模式 16-QAM 10.59 Gb/s 无误码）。发射机、接收机和 rf_stream 已支持每周期 16 个样本（各 16 条 lane），进度见 [4 GSPS](#4-gsps-1)。
+* **4 GSPS，进行中**：发射机、接收机和 rf_stream 已支持每周期 16 个样本（各 16 条 lane），进度见 [4 GSPS](#4-gsps-1)。
 
 主机 CPU 调制解调、视频链路和样本流的结果在 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm)，本工作在它的基础上继续。**本仓库只介绍设计和测量结果，FPGA 调制解调的源码（RTL、位精确模型、testbench）不公开。**
 
@@ -226,21 +211,6 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 　
 
 ## 4 GSPS
-
-### 4 GSPS 下的环回链路
-
-环回链路能不能传两倍的带宽？独立 MTS 设计也可以编成 4.0 GSPS（`MTS_GSPS=4.0`，RF fabric 500 MHz，WNS +0.057 ns），A53 用同样的 N = 1024 在 62 MHz … 1.80 GHz 上收发 OFDM 帧。缓冲模式，每路 0.25 FS RMS：
-
-| 4 GSPS 下的频带 | 子载波数 | 16-QAM：EVM、误码 | 64-QAM：EVM、误码 |
-| :-- | :-: | :-- | :-- |
-| 全带，62 MHz … 1.80 GHz | 834 | −24.4 dB，0（10.59 Gb/s） | −24.0 dB，1 × 10⁻³（15.88 Gb/s） |
-| 低半段，62 … 977 MHz | 440 | −27.8 dB，0 | −28.6 dB，0 |
-| 高半段，977 MHz … 1.80 GHz | 396 | −29.4 dB，0 | −28.6 dB，0 |
-| 对照：2 GSPS，31 … 898 MHz | 834 | −27.4 dB，0 | −28.0 dB，5 × 10⁻⁴ |
-
-* 高半段和低半段一样干净：巴伦和线缆在 1 … 1.8 GHz 没有明显损耗。
-* 全带差 3 dB，符合预期：总功率受削顶限制固定，每个子载波收集的噪声带宽翻了一倍。
-* 所以 4 GSPS 用少 3 dB 的 SNR 换来两倍速率。即使在比流式链路差约 3 dB 的缓冲模式下，16-QAM 10.6 Gb/s 也无误码。
 
 ### 4 GSPS 的 FPGA 调制解调（进行中）
 
