@@ -11,6 +11,7 @@ The OFDM transmitter and receiver of [rfsoc4x2_rdma_ofdm](https://github.com/uce
 
 * **2 GSPS, on the board**: `ofdm_tx` (8 × 1024-point IFFT) and `ofdm_rx` (8 × 1024-point FFT, widely linear equaliser, pilot phase) run together. FPGA to FPGA, 16-QAM (5.29 Gb/s of payload) for 30 s: BER 2.0 × 10⁻¹⁰; 64-QAM 2.3 × 10⁻⁷, 256-QAM 2.1 × 10⁻⁴, the same as the CPU modem. BRAM 73 %, DSP 20 %, timing met.
 * **4 GSPS, in progress**: transmitter, receiver and rf_stream take 16 samples per cycle (16 lanes each); see [4 GSPS](#4-gsps) for where it stands.
+* **Modem 2, in progress**: a new modem for two independent ends (independent lasers or oscillators, independent sample clocks), designed for the worst case; C models and the transmitter RTL done, see [Modem 2](#modem-2-two-independent-ends).
 
 The host CPU modem, the video link and the streaming results of the sample path are in [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm), which this work continues. **This repository documents the design and the measurements; the source of the FPGA modem (RTL, bit-exact models, testbenches) is not published.**
 
@@ -86,6 +87,46 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 
 　
 
+## Modem 2: two independent ends
+
+The modem above lives on the cable loopback: one sample clock, one oscillator, no carrier offset. Modem 2 is a new modem for two independent ends: an optical link through CFP2-ACO modules, or RF up and down conversion with their own oscillators. It is designed for the worst case; the transport (ERNIC, rf_stream, MTS) stays.
+
+* **Waveform** (2 GSPS): N = 1024, CP = 128.
+  * Data on 32 ≤ |k| ≤ 460: 804 data sub-carriers and 54 pilots (every 16th; on −k turned by j^i, so that they carry no pseudo-covariance).
+  * A continuous RF pilot tone on bin 8 (15.6 MHz, −6 dB) in the clear band around DC.
+  * Frame of 32768 samples: an STF (128-sample period, 4 times) at the frame start, two LTFs (the second with k < 0 negated, for the widely linear channel), 26 data symbols.
+  * 16-QAM: 5.10 Gb/s before the FEC.
+* **Receiver.**
+  * DC removal, then blind IQ correction.
+  * The RF pilot, filtered and combined over the polarizations, removes the carrier offset and the laser phase noise sample by sample (no NCO).
+  * STF detection, then LTF timing. The sample clock offset is tracked by a second-order loop; each block window slips by whole samples (no resampler).
+  * Widely linear 2 × (2 · polarizations) combiner per pair (k, −k), whitened by each branch's noise; per-symbol pilot phase and slope.
+* **Worst case**:
+  * two independent lasers of 300 kHz linewidth each;
+  * carrier offset 5 MHz, sample clocks 50 ppm apart;
+  * IQ imbalance 0.5 dB / 3° at both ends, 200 ps between the polarizations, 5 ps between I and Q;
+  * SNR 30 dB, 16-QAM.
+
+  C model with the receiver's data path in fixed point (as planned for the RTL), 12 seeds × 30 frames each:
+
+| RX | bits / errors | BER (95 % Wilson) | per seed | EVM |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 polarization | 28.1 M / 3409 | 1.21 × 10⁻⁴ (1.17 … 1.25 × 10⁻⁴) | 0.91 … 1.50 × 10⁻⁴ | −18.2 … −18.0 dB |
+| 2 polarizations, random state | 28.1 M / 4481 | 1.59 × 10⁻⁴ (1.55 … 1.64 × 10⁻⁴) | 0.91 … 3.62 × 10⁻⁴ | −18.2 … −17.4 dB |
+
+* **FEC** sits behind a generic streaming interface, so codes can be swapped.
+  * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves 12× on the worst seed.
+  * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) is exceeded by the worst seed.
+* **The lasers dominate.** RF oscillators have far less phase noise and offset, so the same receiver has more margin behind an RF mixer.
+* **Status.**
+  * [x] C models: the floating / fixed-point end-to-end reference, and the transmitter bit-exact (AMD's xfft C model).
+  * [x] Transmitter RTL (`m2_tx`): identical to its model sample by sample (16, 64 and 256-QAM at S = 8; 16-QAM at S = 16; 3 frames each).
+  * [ ] Transmitter on the board; the host receiver on captured samples.
+  * [ ] Receiver RTL.
+  * [ ] FEC.
+
+　
+
 ## 4 GSPS
 
 ### The FPGA modem at 4 GSPS (in progress)
@@ -147,6 +188,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 * **2 GSPS，已上板**：`ofdm_tx`（8 个 1024 点 IFFT）和 `ofdm_rx`（8 个 1024 点 FFT、宽线性均衡、导频相位）同时运行。FPGA 到 FPGA，16-QAM（净荷 5.29 Gb/s）30 s BER 2.0 × 10⁻¹⁰；64-QAM 2.3 × 10⁻⁷，256-QAM 2.1 × 10⁻⁴，与 CPU 调制解调相同。BRAM 73 %，DSP 20 %，时序满足。
 * **4 GSPS，进行中**：发射机、接收机和 rf_stream 已支持每周期 16 个样本（各 16 条 lane），进度见 [4 GSPS](#4-gsps-1)。
+* **Modem 2，进行中**：面向两端独立（激光器或本振独立、采样时钟独立）的新调制解调，按最坏情况设计；C 模型和发射端 RTL 已完成，见 [Modem 2](#modem-2两端独立)。
 
 主机 CPU 调制解调、视频链路和样本流的结果在 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm)，本工作在它的基础上继续。**本仓库只介绍设计和测量结果，FPGA 调制解调的源码（RTL、位精确模型、testbench）不公开。**
 
@@ -207,6 +249,46 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 | FPGA 发射、CPU 接收（`--fpga-tx 1`），16-QAM 720p，30 s | 29/29 秒无误码，BER 5.9 × 10⁻¹⁰，14338 帧中 14259 帧逐字节正确，0 TX underflow |
 | FPGA 发射，64-QAM 1080p / 256-QAM，20 s | BER 2.3 × 10⁻⁷ / 1.9 × 10⁻⁴，与 CPU 调制相同 |
 | 时序、资源 | 全部满足（WNS +0.049 ns）；BRAM 73 %，UltraRAM 85 %，DSP 20 %，LUT 43 % |
+
+　
+
+## Modem 2：两端独立
+
+上面的调制解调依赖电缆环回：同一个采样时钟、同一个本振、没有载波频偏。Modem 2 是面向两端独立的新调制解调，用于经 CFP2-ACO 的光链路，或各自带本振的射频上下变频。它按最坏情况设计，传输部分（ERNIC、rf_stream、MTS）不变。
+
+* **波形**（2 GSPS）：N = 1024，CP = 128。
+  * 数据在 32 ≤ |k| ≤ 460：804 个数据子载波和 54 个导频（每 16 个一个；−k 上乘 j^i，不带伪协方差）。
+  * DC 附近的空带里放一个连续的射频导频单音：bin 8（15.6 MHz），−6 dB。
+  * 帧长 32768 样本：帧首 STF（128 样本周期 ×4），两个 LTF（第二个 k < 0 取反，用于宽线性信道估计），26 个数据符号。
+  * 16-QAM：FEC 前 5.10 Gb/s。
+* **接收机**
+  * 先去 DC，再做盲 IQ 校正。
+  * 射频导频经滤波、在各偏振间合并后，逐样本去掉载波频偏和激光相位噪声（不需要 NCO）。
+  * STF 检测，然后用 LTF 定时。采样时钟偏差由二阶环跟踪，各块窗口按整样本滑动（不用重采样器）。
+  * 每对 (k, −k) 用宽线性 2 × (2 · 偏振数) 合并器，按各支路噪声白化；每个符号做导频相位和斜率校正。
+* **最坏情况**
+  * 两个独立激光器，各 300 kHz 线宽；
+  * 载波频偏 5 MHz，采样时钟相差 50 ppm；
+  * 收发两端 IQ 失衡各 0.5 dB / 3°，偏振间 200 ps，I/Q 间 5 ps；
+  * SNR 30 dB，16-QAM。
+
+  C 模型，接收数据通路按计划的 RTL 做定点，12 个种子 × 每个 30 帧：
+
+| 接收 | bit / 误码 | BER（95 % Wilson） | 各种子 | EVM |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 个偏振 | 28.1 M / 3409 | 1.21 × 10⁻⁴（1.17 … 1.25 × 10⁻⁴） | 0.91 … 1.50 × 10⁻⁴ | −18.2 … −18.0 dB |
+| 2 个偏振，随机偏振态 | 28.1 M / 4481 | 1.59 × 10⁻⁴（1.55 … 1.64 × 10⁻⁴） | 0.91 … 3.62 × 10⁻⁴ | −18.2 … −17.4 dB |
+
+* **FEC** 放在通用流接口后面，码可以替换。
+  * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子仍有 12 倍余量。
+  * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）会被最差种子超过。
+* **激光器是主要限制**：射频本振的相位噪声和频偏小得多，同一个接收机接射频混频器时余量更大。
+* **进度**
+  * [x] C 模型：浮点 / 定点端到端参考，发射端位精确模型（AMD 的 xfft C 模型）。
+  * [x] 发射端 RTL（`m2_tx`）：与模型逐样本一致（S = 8 下 16 / 64 / 256-QAM，S = 16 下 16-QAM，各 3 帧）。
+  * [ ] 发射端上板，主机接收机解采集的样本。
+  * [ ] 接收端 RTL。
+  * [ ] FEC。
 
 　
 
