@@ -10,8 +10,8 @@
 **Modem 2**: an OFDM modem for two independent ends (independent lasers or oscillators, independent sample clocks), an optical link through CFP2-ACO modules or RF up and down conversion, designed for the worst case and built in the FPGA, bit-exact with its C models. The host only sends and checks payloads over RoCE v2 (AMD ERNIC, 100G), on the streaming core of [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm). Board: RFSoC 4x2 (XCZU48DR), loopback DAC_A → ADC_B (I), DAC_B → ADC_D (Q), multi-tile synchronised; ZCU208 (the same XCZU48DR) with four DACs and four ADCs.
 
 * **Transmitter, on the board**: `m2_tx` at 2 GSPS (8 × 1024-point IFFT) and 4 GSPS (16 lanes). 2 GSPS: EVM −37.2 dB at 16 / 64 / 256-QAM, 16-QAM (5.10 Gb/s) without an error in 415 M bits. 4 GSPS: 256-QAM (20.4 Gb/s) EVM −34.4 dB.
-* **Receiver, in progress**: `m2_rx`, two polarizations, entirely in the FPGA. Every block is bit-exact with the model in simulation (front end, FFT windows, channel estimation, float32 MMSE, data path), and timing is met out of context at 250 MHz; the whole chain and the board come next.
-* **ZCU208**: a four-channel version at 2 GSPS (four DACs, four ADCs, UltraRAM play / capture over the A53, CLK104, no ERNIC) is built.
+* **Receiver, on the board**: `m2_rx`, two polarizations, entirely in the FPGA and in real time (a frame every 4096 cycles at 250 MHz, 61035 frames/s), the whole chain bit-exact with the model. FPGA transmitter → cable → FPGA receiver at 2 GSPS, 16-QAM (5.10 Gb/s): 1.40 M frames, BER 5.0 × 10⁻¹⁰. At 4 GSPS in bursts (both branches into an on-chip buffer, the same receiver at half speed): no error in 66.9 M bits.
+* **ZCU208**: a four-channel version at 2 GSPS (four DACs, four ADCs, UltraRAM play / capture over the A53, CLK104, no ERNIC) is built, and one with Modem 2's transmitter and receiver (four in, four out).
 
 **This repository documents the design and the measurements; the source of the FPGA modem (RTL, bit-exact models, testbenches) is not published.**
 
@@ -43,7 +43,7 @@ The transmitter (`m2_tx`) takes S samples per 250 MHz cycle; control bit 3 of rf
 
 　
 
-## The FPGA receiver (in progress)
+## The FPGA receiver
 
 `m2_rx`, two branches (polarizations) at 8 samples per cycle, every arithmetic step as in the C model:
 
@@ -54,6 +54,9 @@ The transmitter (`m2_tx`) takes S samples per 250 MHz cycle; control bit 3 of rf
 | channel estimation | LTF estimate, noise per branch, alignment to the running estimate (the timing error's angle, common phase), averaging, delay removal, ±8 smoothing | 27 k values identical (4 frames: every running and smoothed estimate, angles, weights) | WNS +0.50 ns, 252 DSP |
 | MMSE | per pair (k, −k) the 2 × 4 widely linear coefficients in float32: 211 operations in the C's order, modulo-scheduled at 8 cycles per pair on 16 multipliers, 9 adders and a divider; the frame's exponent, int18 | 55 k values identical (4 frames: every float and int coefficient) | — |
 | data path | 8 engines: the combiner, the 54 pilots' phase and least-squares slope per symbol, rotation, decisions | 63 k decisions identical at 16-QAM, 42 k at 256-QAM in the worst case | — |
+| timing loop, packer | the frames' position and rate in Q32 from the alignment angle; the decisions as the payload's bits in 32 KB slots | — | — |
+
+The whole chain (ADC samples in, payload slots out) is bit-exact with the model: 6 frames with CFO 1 MHz, SFO 50 ppm and IQ (every FFT output, every coefficient row, 62.7 k decisions, every pilot result and payload byte), 20 frames at zero offsets (355 k decisions), and two raw board captures (230 k decisions). Real time: the MMSE takes ~3700 of a frame's 4096 cycles (the next frame starts while the last one is quantized), and the FFT's bit-reversed output keeps the timing loop's turn (a frame's LTFs → the next frame's windows) within a frame.
 
 The timing loop works in Q32 fixed point; the coefficients of frame *f* are used from frame *f* + 3 on (the estimation and the MMSE take longer than a frame), which the regression shows to cost nothing measurable but one row (IQ imbalance at zero carrier offset, −1 dB EVM, no errors).
 
@@ -68,8 +71,12 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 | 2 GSPS, FPGA transmitter, receiver on raw ADC captures | the ADCs' calibration converged on the offset tone and frozen; EVM −37.2 dB at 16 / 64 / 256-QAM; 16-QAM (5.10 Gb/s) 0 errors in 415 M bits (BER < 7.2 × 10⁻⁹), 64-QAM 0 / 7.7 M, 256-QAM (10.2 Gb/s) 0 / 10.2 M |
 | 4 GSPS, the same | 16-QAM (10.2 Gb/s) −34.2 dB and 64-QAM (15.3 Gb/s) −35.0 dB, both without errors; 256-QAM (20.4 Gb/s) −34.4 dB, BER 4.6 × 10⁻⁵ |
 | Video | 16-QAM, 720p, one 24.5 ms burst of 1497 OFDM frames: 11 consecutive video frames byte-exact (Figure 1) |
-| Timing, resources, 2 GSPS | all constraints met (WNS +0.054 ns); BRAM 67 %, UltraRAM 85 %, DSP 7.6 %, LUT 36 % ([report](./docs/results/rdma_ofdm_m2_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm_m2_utilization.rpt)) |
-| Timing, resources, 4 GSPS | all constraints met (WNS +0.005 ns); BRAM 71 %, UltraRAM 95 %, DSP 15 %, LUT 43 % ([report](./docs/results/rdma_ofdm4g_m2_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm4g_m2_utilization.rpt)) |
+| 2 GSPS, FPGA transmitter → cable → FPGA receiver, real time | 16-QAM (5.10 Gb/s), 30 s: 1.40 M frames, 59 bit errors in 117 G bits (BER 5.0 × 10⁻¹⁰); 64-QAM BER 2.7 × 10⁻⁷, 256-QAM 1.6 × 10⁻⁶ |
+| 2 GSPS receiver without ERNIC (registers over JTAG), the board's DAC player looping two frames | 16-QAM, 30 s: 1.86 M frames, 46 bit errors in 156 G bits (BER 3.0 × 10⁻¹⁰) |
+| 4 GSPS receiver in bursts | both branches into an 8-frame on-chip buffer from a given RX time, then the 2 GSPS receiver at half speed (frames 3 … 6 of each burst); 16-QAM, 200 bursts: no error in 66.9 M bits |
+| Timing, resources, 2 GSPS transmitter and receiver | all constraints met (WNS +0.011 ns); BRAM 72 %, UltraRAM 85 %, DSP 52 %, LUT 72 % ([report](./docs/results/rdma_ofdm_m2_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm_m2_utilization.rpt)) |
+| Timing, resources, 4 GSPS transmitter | all constraints met (WNS +0.005 ns); BRAM 71 %, UltraRAM 95 %, DSP 15 %, LUT 43 % ([report](./docs/results/rdma_ofdm4g_m2_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm4g_m2_utilization.rpt)) |
+| Timing, resources, 4 GSPS burst receiver | not yet met: WNS −0.301 ns (mostly the CMAC's TX clock; the RF clock −0.052 ns); BRAM 92 %, UltraRAM 94 %, DSP 45 %, LUT 65 % ([report](./docs/results/rdma_ofdm4g_m2b_timing_summary.rpt), [utilisation](./docs/results/rdma_ofdm4g_m2b_utilization.rpt)) |
 
 | ![Modem 2 video](./docs/img/m2_720p_burst.gif) |
 | :---------------------------------------------: |
@@ -113,13 +120,15 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 * [x] One-shot sample capture: the link cannot carry 4 GSPS of samples (128 Gb/s), so the capture stops at its first overflow, on a chunk boundary (four ADCs: the X and Y of a coherent receiver).
 * [x] `rf_gear`: the 500 MHz × 8 streams of the block design to 250 MHz × 16 and back.
 * [x] The transmitter board at 4 GSPS (results above). At 4 GSPS one board per direction: the dual-polarization receiver (2 × 16 FFT lanes) goes on a board of its own.
-* [ ] The receiver board at 4 GSPS (after the 2 GSPS receiver).
+* [x] The receiver at 4 GSPS in bursts (results above): both branches at 16 samples a cycle into UltraRAM and block RAM, read at 8 a cycle by the unchanged 2 GSPS receiver; the frame timing from two raw captures a second apart.
+* [ ] Its timing closed.
 
 　
 
 ## ZCU208
 
 * [x] Four-channel version at 2 GSPS, no ERNIC: four DACs (228 / 229, one 1024-bit beat for all four, so no skew between them) played from block RAM, four ADCs (224 / 225) captured into UltraRAM (256 k samples each) on the same SYSREF-aligned cycle, multi-tile synchronised; the CLK104 programmed by the A53 over I2C (PL_CLK 500 MHz, SYSREF 5 MHz, the LMX2594s at 2.0 GHz straight into the tiles); timing met (WNS +0.094 ns).
+* [x] Four in, four out with Modem 2 (the transmitter from a payload RAM, the receiver with its payload checker, registers over JTAG / the A53): built, timing met (WNS +0.009 ns).
 * [ ] On the board.
 
 　
@@ -169,8 +178,8 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 **Modem 2**：面向两端独立（激光器或本振独立、采样时钟独立）的 OFDM 调制解调，用于经 CFP2-ACO 的光链路或各自带本振的射频上下变频，按最坏情况设计，在 FPGA 内实现，与各自的 C 模型逐位一致。主机只经 RoCE v2（AMD ERNIC，100G）发送和校验净荷，传输基于 [rfsoc4x2_rdma_ofdm](https://github.com/uceeyuf/rfsoc4x2_rdma_ofdm) 的流式核心。板卡：RFSoC 4x2（XCZU48DR），环回 DAC_A → ADC_B（I）、DAC_B → ADC_D（Q），多 tile 同步；ZCU208（同为 XCZU48DR）用四路 DAC、四路 ADC。
 
 * **发射端，已上板**：`m2_tx`，2 GSPS（8 个 1024 点 IFFT）与 4 GSPS（16 条 lane）。2 GSPS：16 / 64 / 256-QAM 的 EVM 都是 −37.2 dB，16-QAM（5.10 Gb/s）415 M bit 零误码；4 GSPS：256-QAM（20.4 Gb/s）EVM −34.4 dB。
-* **接收端，进行中**：`m2_rx`，双偏振，完全在 FPGA 内。各模块在仿真中都与模型逐位一致（前端、FFT 窗口、信道估计、float32 MMSE、数据通路），单独综合在 250 MHz 下时序满足；下一步是整链与上板。
-* **ZCU208**：2 GSPS 四通道版本（四路 DAC、四路 ADC，A53 经 UltraRAM 播放 / 采集，CLK104，不用 ERNIC）已生成 bitstream。
+* **接收端，已上板**：`m2_rx`，双偏振，完全在 FPGA 内实时运行（250 MHz 下每 4096 个周期一帧，每秒 61035 帧），整链与模型逐位一致。FPGA 发射 → 线缆 → FPGA 接收，2 GSPS 16-QAM（5.10 Gb/s）：140 万帧，BER 5.0 × 10⁻¹⁰。4 GSPS 突发接收（两条支路先存进片上缓冲，同一接收机半速处理）：66.9 M bit 零误码。
+* **ZCU208**：2 GSPS 四通道版本（四路 DAC、四路 ADC，A53 经 UltraRAM 播放 / 采集，CLK104，不用 ERNIC）已生成 bitstream；带 Modem 2 发射与接收（4 发 4 收）的版本也已生成。
 
 **本仓库只介绍设计和测量结果，FPGA 调制解调的源码（RTL、位精确模型、testbench）不公开。**
 
@@ -196,7 +205,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 　
 
-## FPGA 接收端（进行中）
+## FPGA 接收端
 
 `m2_rx`，两路支路（偏振），每周期 8 个样本，每一步运算都与 C 模型一致：
 
@@ -207,6 +216,10 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 | 信道估计 | LTF 估计、各支路噪声、对齐到滑动平均估计（定时误差角度、公共相位）、平均、去时延、±8 平滑 | 2.7 万个值相同（4 帧：全部平均与平滑后的估计、角度、权重） | WNS +0.50 ns，252 DSP |
 | MMSE | 每对 (k, −k) 用 float32 算 2 × 4 宽线性系数：211 个运算按 C 的顺序，模调度到每对 8 个周期，16 个乘法器、9 个加法器、1 个除法器；整帧指数，int18 | 5.5 万个值相同（4 帧：全部浮点与整数系数） | — |
 | 数据通路 | 8 个引擎：合并、每个符号 54 个导频的相位与最小二乘斜率、旋转、判决 | 16-QAM 6.3 万个判决相同；最坏情况 256-QAM 4.2 万个相同 | — |
+
+| 定时环、打包 | 由对齐角度给出帧位置与速率（Q32）；判决按净荷比特装进 32 KB 槽 | — | — |
+
+整链（ADC 样本进、净荷槽出）与模型逐位一致：6 帧，1 MHz 频偏、50 ppm 采样频偏、IQ（每个 FFT 输出、每行系数、6.27 万个判决、全部导频结果与净荷字节）；20 帧零偏差（35.5 万个判决）；两份板上原始采集（23 万个判决）。实时性：MMSE 占一帧 4096 个周期中的约 3700 个（上一帧量化时下一帧已开始），FFT 按位反序输出使定时环的一圈（本帧 LTF → 下一帧窗口）不超过一帧。
 
 定时环用 Q32 定点；第 *f* 帧的系数从第 *f* + 3 帧起使用（信道估计与 MMSE 的耗时超过一帧），回归测试显示除一行（零频偏下 IQ 失衡，EVM −1 dB，零误码）外没有可测的代价。
 
@@ -221,8 +234,12 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 | 2 GSPS，FPGA 发射，接收机解原始 ADC 采集 | ADC 校准在偏离的单音上收敛后冻结；16 / 64 / 256-QAM 的 EVM 都是 −37.2 dB；16-QAM（5.10 Gb/s）415 M bit 零误码（BER < 7.2 × 10⁻⁹），64-QAM 0 / 7.7 M，256-QAM（10.2 Gb/s）0 / 10.2 M |
 | 4 GSPS，同上 | 16-QAM（10.2 Gb/s）−34.2 dB、64-QAM（15.3 Gb/s）−35.0 dB，均零误码；256-QAM（20.4 Gb/s）−34.4 dB，BER 4.6 × 10⁻⁵ |
 | 视频 | 16-QAM 720p，一次 24.5 ms、1497 个 OFDM 帧的 burst：11 帧连续视频逐字节正确（图 1） |
-| 时序、资源，2 GSPS | 全部满足（WNS +0.054 ns）；BRAM 67 %，UltraRAM 85 %，DSP 7.6 %，LUT 36 % |
-| 时序、资源，4 GSPS | 全部满足（WNS +0.005 ns）；BRAM 71 %，UltraRAM 95 %，DSP 15 %，LUT 43 % |
+| 2 GSPS，FPGA 发射 → 线缆 → FPGA 接收，实时 | 16-QAM（5.10 Gb/s），30 s：140 万帧，1170 亿 bit 中 59 个误码（BER 5.0 × 10⁻¹⁰）；64-QAM BER 2.7 × 10⁻⁷，256-QAM 1.6 × 10⁻⁶ |
+| 2 GSPS 接收机，不用 ERNIC（寄存器经 JTAG），板上 DAC 播放器循环两帧 | 16-QAM，30 s：186 万帧，1560 亿 bit 中 46 个误码（BER 3.0 × 10⁻¹⁰） |
+| 4 GSPS 突发接收 | 从给定 RX 时间起把两条支路存进 8 帧的片上缓冲，再由 2 GSPS 接收机半速处理（每次突发的第 3 … 6 帧）；16-QAM，200 次突发：66.9 M bit 零误码 |
+| 时序、资源，2 GSPS 发射 + 接收 | 全部满足（WNS +0.011 ns）；BRAM 72 %，UltraRAM 85 %，DSP 52 %，LUT 72 % |
+| 时序、资源，4 GSPS 发射 | 全部满足（WNS +0.005 ns）；BRAM 71 %，UltraRAM 95 %，DSP 15 %，LUT 43 % |
+| 时序、资源，4 GSPS 突发接收 | 尚未满足：WNS −0.301 ns（主要在 CMAC 的 TX 时钟；射频时钟 −0.052 ns）；BRAM 92 %，UltraRAM 94 %，DSP 45 %，LUT 65 % |
 
 　
 
@@ -262,13 +279,15 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 * [x] 一次性样本抓取：链路传不了 4 GSPS 的样本（128 Gb/s），抓取在第一次溢出时停下（正好在 chunk 边界；四路 ADC：相干接收机的 X、Y）。
 * [x] `rf_gear`：block design 的 500 MHz × 8 与 250 MHz × 16 之间互转。
 * [x] 4 GSPS 发射板（结果见上）。4 GSPS 下每块板负责一个方向：双偏振接收机（2 × 16 条 FFT lane）放在单独的板上。
-* [ ] 4 GSPS 接收板（在 2 GSPS 接收端之后）。
+* [x] 4 GSPS 突发接收（结果见上）：两条支路以每周期 16 个样本存进 UltraRAM 与 BRAM，再以每周期 8 个读给不变的 2 GSPS 接收机；帧定时由相隔一秒的两次原始采集给出。
+* [ ] 收敛它的时序。
 
 　
 
 ## ZCU208
 
 * [x] 2 GSPS 四通道版本，不用 ERNIC：四路 DAC（228 / 229，四路在同一个 1024 位节拍里，彼此无偏斜）从 BRAM 播放，四路 ADC（224 / 225）在同一个 SYSREF 对齐的周期开始采进 UltraRAM（每路 256 k 样本），多 tile 同步；A53 经 I2C 配置 CLK104（PL_CLK 500 MHz、SYSREF 5 MHz、LMX2594 以 2.0 GHz 直接送入 tile）；时序满足（WNS +0.094 ns）。
+* [x] 带 Modem 2 的 4 发 4 收（发射端读净荷 RAM，接收端带净荷校验，寄存器经 JTAG / A53）：已生成，时序满足（WNS +0.009 ns）。
 * [ ] 上板。
 
 　
