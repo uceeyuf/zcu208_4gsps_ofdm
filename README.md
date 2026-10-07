@@ -106,6 +106,11 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 
 * **Regression.** 33 conditions, one impairment at a time, then combined (carrier offset ±0.1 … ±7 MHz, a residual one tracked by the in-band pilots only, sample clock ±10 … ±50 ppm, IQ imbalance with and without a carrier offset, a random start and phase, the lasers, AWGN), 12 seeds each, rerun with the RTL's arithmetic after every block: every seed synchronized. It found what single conditions hid: the transmitter's IQ imbalance cost 2.3 dB with a 5 MHz offset (the RF pilot's own image leaking into the pilot filter), fixed by mixing the pilot down at its own frequency.
 * **The ADCs' background calibration.** A strong component synchronous with their 8-way interleaving biases it by its phase: the RF pilot (bin 8 = fs / 128) and the frame itself (the STF is 128-periodic); a frame rotated by 30° came out 2.4 dB worse than at 0° or 90°. With the calibration mode above: EVM −29.4 → −37.2 dB at 2 GSPS, −27.5 → −34.2 dB at 4 GSPS.
+* **On two boards** (ZCU208 transmitter → RFSoC 4x2 receiver, independent clocks, 13 … 15 ppm apart; 16-QAM, 2 GSPS, SMA cables, real time).
+  * The receiver finds the frames itself (STF autocorrelation in the FPGA) and tracks the sample clock from the nominal rate; the host only numbers the payloads for the checker. One board per direction: the receiving board is built without the DAC player (otherwise its UltraRAM, 90 % full, congests the routing and timing is not met; this build meets it, WNS +0.064 ns).
+  * The DAC runs at twice the data rate (4 GSPS: the RFDC without its DUC, the FPGA interpolating ×2 with a 55-tap half-band; the 4 GSPS design will use the same filter at 8 GSPS) and a 2.5 GHz low-pass follows it. The DAC's zero-order-hold image at f_DAC − f, aliased back by the other board's ADC, turns at (clock offset × 2 GHz) between independent clocks and had set a floor of −15 dB (BER 1.5 × 10⁻²); at 2 GSPS it sits in band, at 4 GSPS it is 3 GHz away and filtered.
+  * The receiving ADCs' background calibration is frozen before the frames start (otherwise it keeps adapting on the frames).
+  * 9 runs × 120 s (66 M frames): BER 5.5 × 10⁻⁷ over all, 3.7 … 9.3 × 10⁻⁷ per run, no resynchronisation; EVM −28.0 … −29.3 dB on raw captures.
 * **FEC** sits behind a generic streaming interface, so codes can be swapped.
   * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves ~85× on the worst seed.
   * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) holds as well: 4.2× on the worst seed.
@@ -129,7 +134,7 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 
 * [x] Four-channel version at 2 GSPS, no ERNIC: four DACs (228 / 229, one 1024-bit beat for all four, so no skew between them) played from block RAM, four ADCs (224 / 225) captured into UltraRAM (256 k samples each) on the same SYSREF-aligned cycle, multi-tile synchronised; the CLK104 programmed by the A53 over I2C (PL_CLK 500 MHz, SYSREF 5 MHz, the LMX2594s at 2.0 GHz straight into the tiles); timing met (WNS +0.094 ns).
 * [x] Four in, four out with Modem 2 (the transmitter from a payload RAM, the receiver with its payload checker, registers over JTAG / the A53): built, timing met (WNS +0.009 ns).
-* [ ] On the board.
+* [x] On the board, as the transmitter of the two-board link above: the DAC at 4 GSPS without the DUC, the FPGA interpolating ×2; the LMK04828 from AMD's table for the CLK104 (PL 500 MHz, SYSREF 10 MHz, the LMX2594s at 4.0 GHz into the DAC tiles).
 
 　
 
@@ -265,6 +270,11 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 * **回归测试**：33 种条件，先单项再组合（载波频偏 ±0.1 … ±7 MHz、只靠带内导频跟踪的残余频偏、采样时钟 ±10 … ±50 ppm、带与不带频偏的 IQ 失衡、随机起点与相位、激光、AWGN），每项 12 个种子，每完成一个模块就按 RTL 的运算重跑：所有种子都完成同步。它发现了单项测试看不到的问题：5 MHz 频偏下发射端 IQ 失衡损失 2.3 dB（射频导频自身的镜像漏进导频滤波器），改为按导频自身频率混频后解决。
 * **ADC 后台校准**：与其 8 路交织同步的强成分会按相位把它带偏：射频导频（bin 8 = fs / 128），以及帧本身（STF 以 128 为周期）；帧旋转 30° 比 0° 或 90° 差 2.4 dB。用上文的校准模式后：EVM 2 GSPS 下 −29.4 → −37.2 dB，4 GSPS 下 −27.5 → −34.2 dB。
+* **两块板**（ZCU208 发射 → RFSoC 4x2 接收，时钟独立，相差 13 … 15 ppm；16-QAM，2 GSPS，SMA 线缆，实时）。
+  * 接收机在 FPGA 里自己找帧（STF 自相关），采样时钟从标称速率起自行跟踪；主机只负责给校验器的净荷编号。每块板负责一个方向：接收板不带 DAC 播放器（带着时它的 UltraRAM 用到 90 %，布线拥塞、时序不收敛；这一版时序满足，WNS +0.064 ns）。
+  * DAC 以两倍数据速率工作（4 GSPS：RFDC 不用 DUC，FPGA 用 55 阶半带滤波器 ×2 插值；4 GSPS 设计在 8 GSPS 下复用同一个滤波器），后接 2.5 GHz 低通。DAC 零阶保持在 f_DAC − f 处的镜像被另一块板的 ADC 混叠回来，两块时钟独立时以（时钟偏差 × 2 GHz）旋转，曾造成 −15 dB 的底（BER 1.5 × 10⁻²）；2 GSPS 下它落在带内，4 GSPS 下离带 3 GHz，被滤掉。
+  * 接收 ADC 的后台校准在帧开始前冻结（否则会一直在帧上自适应）。
+  * 9 次 × 120 s（6600 万帧）：总 BER 5.5 × 10⁻⁷，各次 3.7 … 9.3 × 10⁻⁷，没有重新同步；原始采集的 EVM −28.0 … −29.3 dB。
 * **FEC** 放在通用流接口后面，码可以替换。
   * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 85 倍余量。
   * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 4.2 倍余量。
@@ -288,7 +298,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 
 * [x] 2 GSPS 四通道版本，不用 ERNIC：四路 DAC（228 / 229，四路在同一个 1024 位节拍里，彼此无偏斜）从 BRAM 播放，四路 ADC（224 / 225）在同一个 SYSREF 对齐的周期开始采进 UltraRAM（每路 256 k 样本），多 tile 同步；A53 经 I2C 配置 CLK104（PL_CLK 500 MHz、SYSREF 5 MHz、LMX2594 以 2.0 GHz 直接送入 tile）；时序满足（WNS +0.094 ns）。
 * [x] 带 Modem 2 的 4 发 4 收（发射端读净荷 RAM，接收端带净荷校验，寄存器经 JTAG / A53）：已生成，时序满足（WNS +0.009 ns）。
-* [ ] 上板。
+* [x] 上板，作为上文两板链路的发射端：DAC 4 GSPS、不用 DUC，FPGA 做 ×2 插值；CLK104 的 LMK04828 用 AMD 的寄存器表（PL 500 MHz，SYSREF 10 MHz，LMX2594 以 4.0 GHz 送入 DAC tile）。
 
 　
 
