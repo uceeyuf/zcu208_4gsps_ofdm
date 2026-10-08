@@ -110,7 +110,8 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
   * The receiver finds the frames itself (STF autocorrelation in the FPGA) and tracks the sample clock from the nominal rate; the host only numbers the payloads for the checker. One board per direction: the receiving board is built without the DAC player (otherwise its UltraRAM, 90 % full, congests the routing and timing is not met; this build meets it, WNS +0.064 ns).
   * The DAC runs at twice the data rate (4 GSPS: the RFDC without its DUC, the FPGA interpolating ×2 with a 55-tap half-band; the 4 GSPS design will use the same filter at 8 GSPS) and a 2.5 GHz low-pass follows it. The DAC's zero-order-hold image at f_DAC − f, aliased back by the other board's ADC, turns at (clock offset × 2 GHz) between independent clocks and had set a floor of −15 dB (BER 1.5 × 10⁻²); at 2 GSPS it sits in band, at 4 GSPS it is 3 GHz away and filtered.
   * The receiving ADCs' background calibration is frozen before the frames start (otherwise it keeps adapting on the frames).
-  * 9 runs × 120 s (66 M frames): BER 5.5 × 10⁻⁷ over all, 3.7 … 9.3 × 10⁻⁷ per run, no resynchronisation; EVM −28.0 … −29.3 dB on raw captures.
+  * 9 runs × 120 s (66 M frames): BER 5.5 × 10⁻⁷ over all, 3.7 … 9.3 × 10⁻⁷ per run, no resynchronisation; EVM −28.0 … −29.3 dB on raw captures (−31.6 … −33.1 dB with a VLFX-1050+ instead, whose stopband covers the image at 2 GSPS).
+  * **4 GSPS, four DACs into four ADCs** (the same signal on both pairs, combined by the receiver): the ZCU208's DACs at 8 GSPS, the 4x2's ADCs at 4 GSPS, the receiver in bursts (8 frames buffered, 4 decoded per burst, see below). 200 bursts, 6.7 × 10⁷ bits: 199 bursts without a bit error, one burst at BER 0.1; EVM −31.5 dB on raw captures. 16-QAM at 10.2 Gb/s.
 * **FEC** sits behind a generic streaming interface, so codes can be swapped.
   * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves ~85× on the worst seed.
   * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) holds as well: 4.2× on the worst seed.
@@ -126,7 +127,8 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
 * [x] `rf_gear`: the 500 MHz × 8 streams of the block design to 250 MHz × 16 and back.
 * [x] The transmitter board at 4 GSPS (results above). At 4 GSPS one board per direction: the dual-polarization receiver (2 × 16 FFT lanes) goes on a board of its own.
 * [x] The receiver at 4 GSPS in bursts (results above): both branches at 16 samples a cycle into UltraRAM and block RAM, read at 8 a cycle by the unchanged 2 GSPS receiver; the frame timing from two raw captures a second apart.
-* [ ] Its timing closed.
+* [x] Its timing closed: the receiving board without the DAC player (WNS +0.003 ns), the receiver's own frame sync on the buffered burst; the two-board results above.
+* [x] The transmitter at 4 GSPS with the DACs at 8 GSPS ("No DUC", the FPGA's 55-tap half-band ×2, the DAC streams at 500 MHz).
 
 　
 
@@ -274,7 +276,8 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
   * 接收机在 FPGA 里自己找帧（STF 自相关），采样时钟从标称速率起自行跟踪；主机只负责给校验器的净荷编号。每块板负责一个方向：接收板不带 DAC 播放器（带着时它的 UltraRAM 用到 90 %，布线拥塞、时序不收敛；这一版时序满足，WNS +0.064 ns）。
   * DAC 以两倍数据速率工作（4 GSPS：RFDC 不用 DUC，FPGA 用 55 阶半带滤波器 ×2 插值；4 GSPS 设计在 8 GSPS 下复用同一个滤波器），后接 2.5 GHz 低通。DAC 零阶保持在 f_DAC − f 处的镜像被另一块板的 ADC 混叠回来，两块时钟独立时以（时钟偏差 × 2 GHz）旋转，曾造成 −15 dB 的底（BER 1.5 × 10⁻²）；2 GSPS 下它落在带内，4 GSPS 下离带 3 GHz，被滤掉。
   * 接收 ADC 的后台校准在帧开始前冻结（否则会一直在帧上自适应）。
-  * 9 次 × 120 s（6600 万帧）：总 BER 5.5 × 10⁻⁷，各次 3.7 … 9.3 × 10⁻⁷，没有重新同步；原始采集的 EVM −28.0 … −29.3 dB。
+  * 9 次 × 120 s（6600 万帧）：总 BER 5.5 × 10⁻⁷，各次 3.7 … 9.3 × 10⁻⁷，没有重新同步；原始采集的 EVM −28.0 … −29.3 dB（换 VLFX-1050+ 后 −31.6 … −33.1 dB，它的阻带盖住了 2 GSPS 的镜像）。
+  * **4 GSPS，4 路 DAC 进 4 路 ADC**（两对发同一路信号，接收机合并）：ZCU208 的 DAC 8 GSPS，4x2 的 ADC 4 GSPS，接收机按突发工作（缓冲 8 帧、每次解 4 帧，见下）。200 次突发、6.7 × 10⁷ bit：199 次零误码，1 次 BER 0.1；原始采集 EVM −31.5 dB。16-QAM，10.2 Gb/s。
 * **FEC** 放在通用流接口后面，码可以替换。
   * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 85 倍余量。
   * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 4.2 倍余量。
@@ -290,7 +293,8 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
 * [x] `rf_gear`：block design 的 500 MHz × 8 与 250 MHz × 16 之间互转。
 * [x] 4 GSPS 发射板（结果见上）。4 GSPS 下每块板负责一个方向：双偏振接收机（2 × 16 条 FFT lane）放在单独的板上。
 * [x] 4 GSPS 突发接收（结果见上）：两条支路以每周期 16 个样本存进 UltraRAM 与 BRAM，再以每周期 8 个读给不变的 2 GSPS 接收机；帧定时由相隔一秒的两次原始采集给出。
-* [ ] 收敛它的时序。
+* [x] 时序收敛：接收板不带 DAC 播放器（WNS +0.003 ns），接收机在缓冲的突发上自己做帧同步；两板结果见上。
+* [x] 4 GSPS 发射，DAC 8 GSPS（"No DUC"，FPGA 55 阶半带 ×2 插值，DAC 流在 500 MHz）。
 
 　
 
