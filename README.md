@@ -111,7 +111,7 @@ Host: Core Ultra 7 265K, Mellanox ConnectX-4, Ubuntu 24.04. Board: RFSoC 4x2, SM
   * The DAC runs at twice the data rate (4 GSPS: the RFDC without its DUC, the FPGA interpolating ×2 with a 55-tap half-band; the 4 GSPS design will use the same filter at 8 GSPS) and a 2.5 GHz low-pass follows it. The DAC's zero-order-hold image at f_DAC − f, aliased back by the other board's ADC, turns at (clock offset × 2 GHz) between independent clocks and had set a floor of −15 dB (BER 1.5 × 10⁻²); at 2 GSPS it sits in band, at 4 GSPS it is 3 GHz away and filtered.
   * The receiving ADCs' background calibration is frozen before the frames start (otherwise it keeps adapting on the frames).
   * 9 runs × 120 s (66 M frames): BER 5.5 × 10⁻⁷ over all, 3.7 … 9.3 × 10⁻⁷ per run, no resynchronisation; EVM −28.0 … −29.3 dB on raw captures (−31.6 … −33.1 dB with a VLFX-1050+ instead, whose stopband covers the image at 2 GSPS).
-  * **4 GSPS, four DACs into four ADCs** (the same signal on both pairs, combined by the receiver): the ZCU208's DACs at 8 GSPS, the 4x2's ADCs at 4 GSPS, the receiver in bursts (8 frames buffered, 4 decoded per burst, see below). 200 bursts, 6.7 × 10⁷ bits: 199 bursts without a bit error, one burst at BER 0.1; EVM −31.5 dB on raw captures. 16-QAM at 10.2 Gb/s.
+  * **4 GSPS, four DACs into four ADCs** (the same signal on both pairs, combined by the receiver): the ZCU208's DACs at 8 GSPS, the 4x2's ADCs at 4 GSPS, the receiver in bursts (8 frames buffered, 4 decoded per burst, see below). each I/Q pair in one ADC tile. 200 bursts, 6.7 × 10⁷ bits, no bit error; EVM −31.7 dB on raw captures. 16-QAM at 10.2 Gb/s.
 * **FEC** sits behind a generic streaming interface, so codes can be swapped.
   * The staircase code of ITU-T G.709.2 (6.7 %) is commonly operated near 4.5 × 10⁻³ in the literature; that leaves ~85× on the worst seed.
   * RS(544, 514) "KP4" (~2.2 × 10⁻⁴) holds as well: 4.2× on the worst seed.
@@ -277,7 +277,7 @@ GitHub also offers the citation under **Cite this repository** (from [CITATION.c
   * DAC 以两倍数据速率工作（4 GSPS：RFDC 不用 DUC，FPGA 用 55 阶半带滤波器 ×2 插值；4 GSPS 设计在 8 GSPS 下复用同一个滤波器），后接 2.5 GHz 低通。DAC 零阶保持在 f_DAC − f 处的镜像被另一块板的 ADC 混叠回来，两块时钟独立时以（时钟偏差 × 2 GHz）旋转，曾造成 −15 dB 的底（BER 1.5 × 10⁻²）；2 GSPS 下它落在带内，4 GSPS 下离带 3 GHz，被滤掉。
   * 接收 ADC 的后台校准在帧开始前冻结（否则会一直在帧上自适应）。
   * 9 次 × 120 s（6600 万帧）：总 BER 5.5 × 10⁻⁷，各次 3.7 … 9.3 × 10⁻⁷，没有重新同步；原始采集的 EVM −28.0 … −29.3 dB（换 VLFX-1050+ 后 −31.6 … −33.1 dB，它的阻带盖住了 2 GSPS 的镜像）。
-  * **4 GSPS，4 路 DAC 进 4 路 ADC**（两对发同一路信号，接收机合并）：ZCU208 的 DAC 8 GSPS，4x2 的 ADC 4 GSPS，接收机按突发工作（缓冲 8 帧、每次解 4 帧，见下）。200 次突发、6.7 × 10⁷ bit：199 次零误码，1 次 BER 0.1；原始采集 EVM −31.5 dB。16-QAM，10.2 Gb/s。
+  * **4 GSPS，4 路 DAC 进 4 路 ADC**（两对发同一路信号，接收机合并）：ZCU208 的 DAC 8 GSPS，4x2 的 ADC 4 GSPS，接收机按突发工作（缓冲 8 帧、每次解 4 帧，见下）。每对 I/Q 在同一个 ADC tile。200 次突发、6.7 × 10⁷ bit 零误码；原始采集 EVM −31.7 dB。16-QAM，10.2 Gb/s。
 * **FEC** 放在通用流接口后面，码可以替换。
   * ITU-T G.709.2 的 staircase 码（6.7 %）在文献中常用的工作点约 4.5 × 10⁻³，对最差种子约有 85 倍余量。
   * RS(544, 514)"KP4"（约 2.2 × 10⁻⁴）也满足：最差种子仍有 4.2 倍余量。
